@@ -9,6 +9,7 @@
 
 const yargs = require('yargs');
 const fs = require('fs');
+const {isObjectOfUnknownValues} = require('../lighthouse-core/lib/type-verifiers.js');
 
 /**
  * @param {string=} manualArgv
@@ -233,6 +234,11 @@ function getFlags(manualArgv) {
           describe: 'Controls throttling method',
         },
       })
+
+      // Throttling settings, parsed as an object.
+      .option('throttling', {
+        coerce: coerceThrottling,
+      })
       .describe({
         'throttling.rttMs': 'Controls simulated network RTT (TCP layer)',
         'throttling.throughputKbps': 'Controls simulated network download throughput',
@@ -241,6 +247,7 @@ function getFlags(manualArgv) {
         'throttling.uploadThroughputKbps': 'Controls emulated network upload throughput',
         'throttling.cpuSlowdownMultiplier': 'Controls simulated + emulated CPU throttling',
       })
+
       .options({
         'extra-headers': {
           coerce: coerceExtraHeaders,
@@ -365,7 +372,9 @@ function coerceExtraHeaders(value) {
   // TODO: this function does not actually verify the object type.
   if (value === undefined) return value;
   if (typeof value === 'object') return /** @type {LH.SharedFlagsSettings['extraHeaders']} */ (value);
-  if (typeof value !== 'string') throw new Error('asdfasf');
+  if (typeof value !== 'string') {
+    throw new Error(`Invalid value: Argument 'extra-headers' must be a string`);
+  }
 
   // (possibly) load and parse extra headers from JSON.
   if (!value.startsWith('{')) {
@@ -373,6 +382,40 @@ function coerceExtraHeaders(value) {
     return JSON.parse(fs.readFileSync(value, 'utf-8'));
   }
   return JSON.parse(value);
+}
+
+/**
+ * Take yarg's unchecked object value and ensure it's proper throttling settings.
+ * @param {unknown} value
+ * @return {LH.ThrottlingSettings}
+ */
+function coerceThrottling(value) {
+  if (!isObjectOfUnknownValues(value)) {
+    throw new Error(`Invalid value: Argument 'throttling' must be an object, specified per-property ('throttling.rttMs', 'throttling.throughputKbps', etc)`);
+  }
+
+  /** @type {Array<keyof LH.ThrottlingSettings>} */
+  const throttlingKeys = [
+    'rttMs',
+    'throughputKbps',
+    'requestLatencyMs',
+    'downloadThroughputKbps',
+    'uploadThroughputKbps',
+    'cpuSlowdownMultiplier',
+  ];
+
+  /** @type {LH.ThrottlingSettings} */
+  const throttlingSettings = {};
+  for (const key of throttlingKeys) {
+    const possibleSetting = value[key];
+    if (possibleSetting !== undefined && typeof possibleSetting !== 'number') {
+      throw new Error(`Invalid value: 'throttling.${key}' must be a number`);
+    }
+    // Note: this works type-wise because the throttling settings all have the same type.
+    throttlingSettings[key] = possibleSetting;
+  }
+
+  return throttlingSettings;
 }
 
 module.exports = {
